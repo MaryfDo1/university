@@ -4,10 +4,6 @@ import os
 import random
 import string
 import time
-import difflib
-import sys
-import threading
-import atexit
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -28,40 +24,21 @@ scheduler = AsyncIOScheduler()
 
 active_crashes = {}
 pending_reteik = {}
-
-KNOWN_COMMANDS = [
-    "/start", "/menu", "/level", "/collect", "/mypet", "/top",
-    "/bonuska", "/bonuska-", "/broadcast", "/reteik", "/rehex"
-]
+pending_support = {}
+pending_broad = {}
 
 class BetState(StatesGroup):
     waiting_bet = State()
-
 class CoinState(StatesGroup):
     choosing = State()
-
 class HighLowState(StatesGroup):
     choosing = State()
-
 class BlackjackState(StatesGroup):
     playing = State()
-
 class DiceState(StatesGroup):
     choosing_sum = State()
 
-class SupportState(StatesGroup):
-    waiting_text = State()
-
-class BroadcastState(StatesGroup):
-    waiting_message = State()
-
-# ====================== КОРОТКИЕ КЛЮЧИ ======================
-KEY_MAP = {
-    "balance": "b", "level": "l", "hex": "h", "pets": "p",
-    "support_cd": "sc", "agreed": "a", "zero_bonus_end": "z",
-    "last_collect_time": "lc", "notify_sent": "n",
-    "rehex_count": "rc", "rehex_cost": "rx"
-}
+KEY_MAP = {"balance": "b", "level": "l", "hex": "h", "pets": "p", "support_cd": "sc", "agreed": "a", "zero_bonus_end": "z", "last_collect_time": "lc", "notify_sent": "n", "rehex_count": "rc", "rehex_cost": "rx"}
 REVERSE_MAP = {v: k for k, v in KEY_MAP.items()}
 
 def shorten(data):
@@ -73,21 +50,6 @@ def restore(data):
     if isinstance(data, dict):
         return {REVERSE_MAP.get(k, k): restore(v) for k, v in data.items()}
     return data
-
-def migrate_to_short_keys():
-    if not os.path.exists(DATA_FILE):
-        return
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-    migrated = {}
-    for uid, user in raw.items():
-        if "b" in user:
-            migrated[uid] = user
-        else:
-            migrated[uid] = shorten(user)
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(migrated, f, ensure_ascii=False, separators=(',', ':'))
-    print("✅ Файл успешно мигрирован")
 
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -102,33 +64,14 @@ def save_data(data):
         json.dump(short, f, ensure_ascii=False, separators=(',', ':'))
 
 users = load_data()
-if users and "b" not in next(iter(users.values()), {}):
-    migrate_to_short_keys()
-    users = load_data()
-
-# ====================== ТОП ======================
 top_cache = {"money": [], "level": []}
 
 def rebuild_top():
     global top_cache
     sorted_money = sorted(users.items(), key=lambda x: x[1]["balance"], reverse=True)
-    money_list = []
-    for i, (_, u) in enumerate(sorted_money[:15]):
-        money_list.append({
-            "username": f"@{u.get('username', '—')}",
-            "balance": u["balance"],
-            "level": u.get("level", 1),
-            "place": i + 1
-        })
+    money_list = [{"username": f"@{u.get('username', '—')}", "balance": u["balance"], "level": u.get("level", 1), "place": i + 1} for i, (_, u) in enumerate(sorted_money[:15])]
     sorted_level = sorted(users.items(), key=lambda x: x[1].get("level", 1), reverse=True)
-    level_list = []
-    for i, (_, u) in enumerate(sorted_level[:15]):
-        level_list.append({
-            "username": f"@{u.get('username', '—')}",
-            "balance": u["balance"],
-            "level": u.get("level", 1),
-            "place": i + 1
-        })
+    level_list = [{"username": f"@{u.get('username', '—')}", "balance": u["balance"], "level": u.get("level", 1), "place": i + 1} for i, (_, u) in enumerate(sorted_level[:15])]
     top_cache = {"money": money_list, "level": level_list}
     with open(TOP_FILE, "w", encoding="utf-8") as f:
         json.dump(top_cache, f, ensure_ascii=False, indent=2)
@@ -141,23 +84,13 @@ def get_hex():
 def get_user(user_id):
     uid = str(user_id)
     if uid not in users:
-        users[uid] = {
-            "balance": 50, "level": 1, "hex": get_hex(), "pets": {},
-            "support_cd": 0, "agreed": False, "zero_bonus_end": 0,
-            "last_collect_time": datetime.now().isoformat(), "notify_sent": False,
-            "rehex_count": 0, "rehex_cost": 10000
-        }
+        users[uid] = {"balance": 50, "level": 1, "hex": get_hex(), "pets": {}, "support_cd": 0, "agreed": False, "zero_bonus_end": 0, "last_collect_time": datetime.now().isoformat(), "notify_sent": False, "rehex_count": 0, "rehex_cost": 10000}
         save_data(users)
     else:
         u = users[uid]
-        if "last_collect_time" not in u:
-            u["last_collect_time"] = datetime.now().isoformat()
-            u["notify_sent"] = False
-        if "pets" not in u:
-            u["pets"] = {}
-        if "rehex_count" not in u:
-            u["rehex_count"] = 0
-            u["rehex_cost"] = 10000
+        if "last_collect_time" not in u: u["last_collect_time"] = datetime.now().isoformat(); u["notify_sent"] = False
+        if "pets" not in u: u["pets"] = {}
+        if "rehex_count" not in u: u["rehex_count"] = 0; u["rehex_cost"] = 10000
     return users[uid]
 
 def handle_zero_balance(u):
@@ -184,13 +117,6 @@ GAMES = {
     "game_highlow": {"title": "⬆️ Выше/Ниже","desc": "Следующая карта выше или ниже?", "chance": 0.34, "multiplier": 2.3},
     "game_crash": {"title": "💥 Crash", "desc": "Выводи до краша.", "chance": 0.25, "multiplier": 4.0},
     "game_wheel": {"title": "🎰 Wheel", "desc": "Колесо фортуны.", "chance": 0.26, "multiplier": 3.3}
-}
-
-# ====================== РУЛЕТКА — НОВЫЙ ПРИНЦИП ======================
-ROULETTE_COLORS = {
-    "roulette_red":    {"emoji": "🔴", "name": "Красный"},
-    "roulette_black":  {"emoji": "⚫", "name": "Чёрный"},
-    "roulette_green":  {"emoji": "🟢", "name": "Зелёный"}
 }
 
 def main_menu_kb():
@@ -228,14 +154,10 @@ def pet_shop_kb(user):
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def get_next_level_cost(level: int) -> int:
-    if level < 20:
-        return int(100 * (1.3 ** (level - 1)))
-    elif level < 35:
-        return int(100 * (1.3 ** 19) * (1.2 ** (level - 20)))
-    elif level < 50:
-        return int(100 * (1.3 ** 19) * (1.2 ** 15) * (1.1 ** (level - 35)))
-    else:
-        return int(100 * (1.3 ** 19) * (1.2 ** 15) * (1.1 ** 15) * (1.05 ** (level - 50)))
+    if level < 20: return int(100 * (1.3 ** (level - 1)))
+    elif level < 35: return int(100 * (1.3 ** 19) * (1.2 ** (level - 20)))
+    elif level < 50: return int(100 * (1.3 ** 19) * (1.2 ** 15) * (1.1 ** (level - 35)))
+    else: return int(100 * (1.3 ** 19) * (1.2 ** 15) * (1.1 ** 15) * (1.05 ** (level - 50)))
 
 def get_pet_multiplier(level: int) -> float:
     mult = 1.0
@@ -247,18 +169,18 @@ def get_pet_multiplier(level: int) -> float:
 
 def get_bet_limits(level: int):
     if level >= 100: return 500, 1500000
-    if level >= 75:  return 300, 1000000
-    if level >= 65:  return 200, 500000
-    if level >= 50:  return 150, 150000
-    if level >= 35:  return 100, 15000
-    if level >= 20:  return 25, 1500
+    if level >= 75: return 300, 1000000
+    if level >= 65: return 200, 500000
+    if level >= 50: return 150, 150000
+    if level >= 35: return 100, 15000
+    if level >= 20: return 25, 1500
     return 5, 250
 
 def get_level_badge(level: int) -> str:
     if level >= 200: return "🌟 УЛЬТИМАТНЫЙ"
     if level >= 100: return "🔥 ЛЕГЕНДАРНЫЙ"
-    if level >= 50:  return "⭐ МАСТЕР"
-    if level >= 20:  return "🏆 МАКСИМАЛЬНЫЙ"
+    if level >= 50: return "⭐ МАСТЕР"
+    if level >= 20: return "🏆 МАКСИМАЛЬНЫЙ"
     return ""
 
 def level_menu_kb(user):
@@ -377,8 +299,7 @@ async def process_bet(msg: Message, state: FSMContext):
     min_bet, max_bet = get_bet_limits(u["level"])
     try:
         bet = int(msg.text)
-        if not min_bet <= bet <= max_bet:
-            raise ValueError
+        if not min_bet <= bet <= max_bet: raise ValueError
     except:
         await msg.answer(f"❌ От {min_bet} до {max_bet} TeX!")
         return
@@ -389,89 +310,50 @@ async def process_bet(msg: Message, state: FSMContext):
     u["balance"] -= bet
     save_data(users)
     uid = str(msg.from_user.id)
-
     if game in ["game_coin", "game_highlow", "game_bj", "game_dice", "game_roulette", "game_wheel"]:
         if game == "game_coin":
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🪙 Орёл", callback_data="coin_orol")],
-                [InlineKeyboardButton(text="🪙 Решка", callback_data="coin_reshka")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]
-            ])
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🪙 Орёл", callback_data="coin_orol")],[InlineKeyboardButton(text="🪙 Решка", callback_data="coin_reshka")],[InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]])
             await msg.answer("🪙 Выбери сторону:", reply_markup=kb)
             await state.set_state(CoinState.choosing)
             await state.update_data(bet=bet)
-
         elif game == "game_highlow":
             first = random.randint(2, 14)
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬆️ Выше", callback_data="hl_higher")],
-                [InlineKeyboardButton(text="⬇️ Ниже", callback_data="hl_lower")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]
-            ])
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬆️ Выше", callback_data="hl_higher")],[InlineKeyboardButton(text="⬇️ Ниже", callback_data="hl_lower")],[InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]])
             await msg.answer(f"🃏 Первая карта: {first}\nЧто будет следующая?", reply_markup=kb)
             await state.set_state(HighLowState.choosing)
             await state.update_data(first=first, bet=bet)
-
         elif game == "game_bj":
             player = [random.randint(1,13), random.randint(1,13)]
             dealer_show = random.randint(1,13)
             psum = sum(min(10, c) for c in player)
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🃏 Взять карту", callback_data="bj_hit")],
-                [InlineKeyboardButton(text="✅ Хватит", callback_data="bj_stand")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]
-            ])
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🃏 Взять карту", callback_data="bj_hit")],[InlineKeyboardButton(text="✅ Хватит", callback_data="bj_stand")],[InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]])
             await msg.answer(f"🃏 Твои карты: {player} (сумма ≈ {psum})\nДилер показывает: {dealer_show}", reply_markup=kb)
             await state.set_state(BlackjackState.playing)
             await state.update_data(player=player, dealer_show=dealer_show, psum=psum, bet=bet)
-
         elif game == "game_dice":
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬇️ Меньше 7", callback_data="dice_low")],
-                [InlineKeyboardButton(text="🎯 Ровно 7", callback_data="dice_seven")],
-                [InlineKeyboardButton(text="⬆️ Больше 7", callback_data="dice_high")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]
-            ])
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬇️ Меньше 7", callback_data="dice_low")],[InlineKeyboardButton(text="🎯 Ровно 7", callback_data="dice_seven")],[InlineKeyboardButton(text="⬆️ Больше 7", callback_data="dice_high")],[InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]])
             await msg.answer("🎲 Угадай сумму двух кубиков:", reply_markup=kb)
             await state.set_state(DiceState.choosing_sum)
             await state.update_data(bet=bet)
-
         elif game == "game_roulette":
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔴 Красный", callback_data="roulette_red")],
-                [InlineKeyboardButton(text="⚫ Чёрный", callback_data="roulette_black")],
-                [InlineKeyboardButton(text="🟢 Зелёный", callback_data="roulette_green")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]
-            ])
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔴 Красный", callback_data="roulette_red")],[InlineKeyboardButton(text="⚫ Чёрный", callback_data="roulette_black")],[InlineKeyboardButton(text="🟢 Зелёный", callback_data="roulette_green")],[InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]])
             await msg.answer("🎡 Выбери цвет:", reply_markup=kb)
             await state.update_data(bet=bet)
-
         elif game == "game_wheel":
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🎡 Запустить колесо", callback_data="wheel_spin")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]
-            ])
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎡 Запустить колесо", callback_data="wheel_spin")],[InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]])
             await msg.answer("🎰 Колесо фортуны\nНажми кнопку ниже!", reply_markup=kb)
             await state.update_data(bet=bet)
-
     elif game == "game_crash":
         crash_point = round(random.expovariate(0.32) + 0.55, 2)
         if crash_point < 0.51: crash_point = 0.51
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Вывести сейчас", callback_data="crash_cashout")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]
-        ])
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💰 Вывести сейчас", callback_data="crash_cashout")],[InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]])
         game_msg = await msg.answer("💥 CRASH\n\nМножитель: 0.50x\n\nНажимай «Вывести» до краша!", reply_markup=kb)
         active_crashes[uid] = {"bet": bet, "crash_point": crash_point, "current": 0.50, "message": game_msg, "cashed": False}
         asyncio.create_task(run_crash(uid))
         await state.clear()
-
-    else:  # Слоты
+    else:
         slot_msg = await msg.answer("🎰 <b>Крутим слоты...</b> 🍒", parse_mode="HTML")
-        animation_frames = [
-            "🍒 🍋 💎", "7️⃣ 🔔 ⭐", "💰 🔥 🍒", "⭐ 🍒 7️⃣",
-            "💎 🔔 🍋", "🍒 7️⃣ 💰", "🔥 ⭐ 💎", "🔔 🍋 7️⃣"
-        ]
+        animation_frames = ["🍒 🍋 💎", "7️⃣ 🔔 ⭐", "💰 🔥 🍒", "⭐ 🍒 7️⃣", "💎 🔔 🍋", "🍒 7️⃣ 💰", "🔥 ⭐ 💎", "🔔 🍋 7️⃣"]
         for i, frame in enumerate(animation_frames):
             await asyncio.sleep(0.45)
             prefix = "🎰 Крутим..." if i % 2 == 0 else "🎰 Вращаем..."
@@ -489,15 +371,13 @@ async def process_bet(msg: Message, state: FSMContext):
         else:
             while True:
                 s1, s2, s3 = random.choices(slot_symbols, k=3)
-                if not (s1 == s2 == s3):
-                    break
+                if not (s1 == s2 == s3): break
             final_frame = f"{s1} {s2} {s3}"
             result_text = f"🎰 <b>Не повезло...</b>\n{final_frame}\n😢 Ставка проиграна"
         save_data(users)
         await slot_msg.edit_text(result_text, parse_mode="HTML", reply_markup=repeat_back_kb(game))
         await state.clear()
 
-# ==================== ИНТЕРАКТИВНЫЕ ИГРЫ ====================
 @dp.callback_query(F.data.in_(["coin_orol", "coin_reshka"]))
 async def coin_play(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -553,10 +433,7 @@ async def bj_hit(cb: CallbackQuery, state: FSMContext):
         await cb.message.edit_text(f"🃏 Перебор!\nТвои карты: {player} (сумма {psum})\n😢 Проигрыш", reply_markup=repeat_back_kb("game_bj"))
         await state.clear()
         return
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🃏 Взять ещё", callback_data="bj_hit")],
-        [InlineKeyboardButton(text="✅ Хватит", callback_data="bj_stand")],
-    ])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🃏 Взять ещё", callback_data="bj_hit")],[InlineKeyboardButton(text="✅ Хватит", callback_data="bj_stand")]])
     await cb.message.edit_text(f"🃏 Ты: {player} (сумма ≈ {psum})\nДилер показывает: {data['dealer_show']}", reply_markup=kb)
 
 @dp.callback_query(F.data == "bj_stand")
@@ -609,42 +486,29 @@ async def dice_play(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_text(text, reply_markup=repeat_back_kb("game_dice"))
     await state.clear()
 
-# ====================== РУЛЕТКА — НОВЫЙ ПРИНЦИП ======================
 @dp.callback_query(F.data.startswith("roulette_"))
 async def roulette_play(cb: CallbackQuery, state: FSMContext):
-    choice_key = cb.data
+    color_map = {"roulette_red": "🔴 Красный", "roulette_black": "⚫ Чёрный", "roulette_green": "🟢 Зелёный"}
+    choice_name = color_map[cb.data]
     data = await state.get_data()
     bet = data.get("bet", 0)
-    
     await cb.message.edit_text("🎡 Крутим рулетку...")
     await asyncio.sleep(1.8)
-    
-    # Новый принцип: выбираем ключ, а не строку
-    result_key = random.choice(list(ROULETTE_COLORS.keys()))
-    
-    win = (choice_key == result_key)
+    result_name = random.choice(["Красный", "Чёрный", "Зелёный"])
+    win = choice_name == result_name
     u = get_user(cb.from_user.id)
-    
-    choice_emoji = ROULETTE_COLORS[choice_key]["emoji"]
-    choice_name  = ROULETTE_COLORS[choice_key]["name"]
-    result_emoji = ROULETTE_COLORS[result_key]["emoji"]
-    result_name  = ROULETTE_COLORS[result_key]["name"]
-    
     if win:
         prize = int(bet * GAMES["game_roulette"]["multiplier"])
         u["balance"] += prize
         result_text = f"""🎡 Рулетка
-
-Ставка на: {choice_emoji} {choice_name}
-Выигрышный цвет: {result_emoji} {result_name}
+Ставка на: {choice_name}
+Выигрышный цвет: {result_name}
 Результат: 🎉 ПОБЕДА! +{prize} TeX ({GAMES["game_roulette"]["multiplier"]}x)"""
     else:
         result_text = f"""🎡 Рулетка
-
-Ставка на: {choice_emoji} {choice_name}
-Выигрышный цвет: {result_emoji} {result_name}
+Ставка на: {choice_name}
+Выигрышный цвет: {result_name}
 Результат: 😢 Проигрыш"""
-    
     handle_zero_balance(u)
     save_data(users)
     await cb.message.edit_text(result_text, reply_markup=repeat_back_kb("game_roulette"))
@@ -671,50 +535,35 @@ async def wheel_play(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_text(text, reply_markup=repeat_back_kb("game_wheel"))
     await state.clear()
 
-# ====================== CRASH ======================
 async def run_crash(uid: str):
-    if uid not in active_crashes:
-        return
+    if uid not in active_crashes: return
     data = active_crashes[uid]
     try:
         while not data.get("cashed", False) and data["current"] < data["crash_point"]:
             await asyncio.sleep(0.25)
             increment = round(random.uniform(0.02, 0.11), 2)
             data["current"] = round(data["current"] + increment, 2)
-            if data.get("cashed", False):
-                return
-            if data["current"] >= data["crash_point"]:
-                break
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=f"💰 Вывести ({data['current']:.2f}x)", callback_data="crash_cashout")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]
-            ])
+            if data.get("cashed", False): return
+            if data["current"] >= data["crash_point"]: break
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"💰 Вывести ({data['current']:.2f}x)", callback_data="crash_cashout")],[InlineKeyboardButton(text="⬅️ Назад", callback_data="casino")]])
             try:
-                await data["message"].edit_text(
-                    f"💥 CRASH\n\nМножитель: {data['current']:.2f}x\n\nВыводи до краша!",
-                    reply_markup=kb
-                )
-            except:
-                return
-        if data.get("cashed", False):
-            return
+                await data["message"].edit_text(f"💥 CRASH\n\nМножитель: {data['current']:.2f}x\n\nВыводи до краша!", reply_markup=kb)
+            except: return
+        if data.get("cashed", False): return
         u = get_user(int(uid))
         text = f"💥 КРАШ на {data['crash_point']:.2f}x!\n😢 Проигрыш {data['bet']} TeX"
         try:
             await data["message"].edit_text(text, reply_markup=repeat_back_kb("game_crash"))
-        except:
-            pass
+        except: pass
     finally:
         active_crashes.pop(uid, None)
 
 @dp.callback_query(F.data == "crash_cashout")
 async def crash_cashout(cb: CallbackQuery):
     uid = str(cb.from_user.id)
-    if uid not in active_crashes:
-        return
+    if uid not in active_crashes: return
     data = active_crashes[uid]
-    if data.get("cashed", False):
-        return
+    if data.get("cashed", False): return
     data["cashed"] = True
     current = data["current"]
     prize = int(data["bet"] * current)
@@ -725,11 +574,9 @@ async def crash_cashout(cb: CallbackQuery):
     text = f"✅ ВЫВЕДЕНО на {current:.2f}x\n🎉 +{prize} TeX ({current:.2f}x)"
     try:
         await cb.message.edit_text(text, reply_markup=repeat_back_kb("game_crash"))
-    except:
-        pass
+    except: pass
     active_crashes.pop(uid, None)
 
-# ====================== ПИТОМЦЫ ======================
 @dp.callback_query(F.data == "pets")
 async def pets_shop(cb: CallbackQuery):
     u = get_user(cb.from_user.id)
@@ -740,15 +587,9 @@ async def buy_pet(cb: CallbackQuery):
     idx = int(cb.data[8:])
     name, earn, req, price = PETS[idx]
     u = get_user(cb.from_user.id)
-    if u["level"] < req:
-        await cb.answer("❌ Уровень слишком маленький!", show_alert=True)
-        return
-    if name in u.get("pets", {}):
-        await cb.answer("У тебя уже есть этот питомец!", show_alert=True)
-        return
-    if u["balance"] < price:
-        await cb.answer("❌ Недостаточно TeX!", show_alert=True)
-        return
+    if u["level"] < req: await cb.answer("❌ Уровень слишком маленький!", show_alert=True); return
+    if name in u.get("pets", {}): await cb.answer("У тебя уже есть этот питомец!", show_alert=True); return
+    if u["balance"] < price: await cb.answer("❌ Недостаточно TeX!", show_alert=True); return
     u["balance"] -= price
     handle_zero_balance(u)
     now = datetime.now()
@@ -763,35 +604,48 @@ async def buy_pet(cb: CallbackQuery):
     save_data(users)
     await cb.message.edit_text(f"✅ Куплен {name}!", reply_markup=pet_shop_kb(u))
 
-@dp.callback_query(F.data == "collect")
-async def collect_pets(cb: CallbackQuery):
-    u = get_user(cb.from_user.id)
+def perform_collect(u):
     total = 0
     now = datetime.now()
     mult = get_pet_multiplier(u["level"])
     for pet in u.get("pets", {}).values():
-        last = datetime.fromisoformat(pet["last_collect_time"])
+        last = datetime.fromisoformat(pet.get("last_collect_time", now.isoformat()))
         minutes_passed = (now - last).total_seconds() / 60
-        if minutes_passed >= 30:
-            total += int(pet["earn"] * 2 * mult)
-            pet["last_collect_time"] = (last + timedelta(minutes=30)).isoformat()
+        intervals = int(minutes_passed // 30)
+        if intervals > 0:
+            total += int(pet["earn"] * mult * intervals)
+            pet["last_collect_time"] = (last + timedelta(minutes=30 * intervals)).isoformat()
+    return total
+
+@dp.callback_query(F.data == "collect")
+async def collect_pets(cb: CallbackQuery):
+    u = get_user(cb.from_user.id)
+    total = perform_collect(u)
     u["balance"] += total
     handle_zero_balance(u)
-    u["last_collect_time"] = now.isoformat()
+    u["last_collect_time"] = datetime.now().isoformat()
     u["notify_sent"] = False
     save_data(users)
     await cb.answer(f"💰 Собрано {total} TeX!", show_alert=True)
     await cb.message.edit_text("🐾 Магазин питомцев Texarnia!", reply_markup=pet_shop_kb(u))
+
+@dp.message(Command("collect"))
+async def collect_cmd(msg: Message):
+    u = get_user(msg.from_user.id)
+    total = perform_collect(u)
+    u["balance"] += total
+    handle_zero_balance(u)
+    u["last_collect_time"] = datetime.now().isoformat()
+    u["notify_sent"] = False
+    save_data(users)
+    await msg.answer(f"💰 Собрано {total} TeX!")
 
 @dp.message(Command("mypet"))
 async def mypet(msg: Message):
     u = get_user(msg.from_user.id)
     mult = get_pet_multiplier(u["level"])
     buff_pct = int((mult - 1) * 100)
-    lines = []
-    for n, d in u.get("pets", {}).items():
-        buffed = int(d['earn'] * mult)
-        lines.append(f"• {n} — {buffed} TeX/30мин")
+    lines = [f"• {n} — {int(d['earn'] * mult)} TeX/30мин" for n, d in u.get("pets", {}).items()]
     pets_text = "\n".join(lines) or "• Нет питомцев"
     extra = f"\n📈 Бафф от уровня: +{buff_pct}% к прибыли всех питомцев" if buff_pct > 0 else ""
     await msg.answer(f"🐾 **Твои питомцы:**\n{pets_text}{extra}")
@@ -815,21 +669,13 @@ async def rehex_cmd(msg: Message):
         u["rehex_cost"] = current_cost + 1000
     handle_zero_balance(u)
     save_data(users)
-    await msg.answer(
-        f"✅ HEX обновлён!\n"
-        f"Старый: {old_hex}\n"
-        f"Новый: {new_hex}\n"
-        f"Списано: {current_cost} TeX\n"
-        f"Следующая смена будет стоить: {u['rehex_cost']} TeX"
-    )
+    await msg.answer(f"✅ HEX обновлён!\nСтарый: {old_hex}\nНовый: {new_hex}\nСписано: {current_cost} TeX\nСледующая смена будет стоить: {u['rehex_cost']} TeX")
 
-# ====================== /top ======================
 @dp.message(Command("top"))
 async def top_cmd(msg: Message):
     await msg.answer("Загрузка топа...")
     rebuild_top()
-    text = msg.text.lower()
-    args = text.split()
+    args = msg.text.lower().split()
     if len(args) > 1 and args[1] == "lt":
         table = "🏆 ТОП-15 ПО УРОВНЯМ\n\n"
         for entry in top_cache["level"]:
@@ -843,7 +689,6 @@ async def top_cmd(msg: Message):
     table += f"\nТвоё место: {my_place}\n\n💡 Используй:\n/top — топ по деньгам\n/top lt — топ по уровням"
     await msg.answer(f"<pre>{table}</pre>", parse_mode="HTML")
 
-# ====================== АДМИН ======================
 @dp.message(Command("bonuska"))
 async def bonuska_cmd(msg: Message):
     if msg.from_user.id != ADMIN_ID: return
@@ -880,8 +725,7 @@ async def bonuska_minus_cmd(msg: Message):
 
 @dp.message(Command("reteik"))
 async def reteik_start(msg: Message):
-    if msg.from_user.id != ADMIN_ID:
-        return
+    if msg.from_user.id != ADMIN_ID: return
     try:
         parts = msg.text.split(maxsplit=1)
         if len(parts) < 2:
@@ -889,94 +733,80 @@ async def reteik_start(msg: Message):
             return
         hex_code = parts[1].strip()
         pending_reteik[msg.from_user.id] = hex_code
-        await msg.answer(f"✅ HEX принят.\nТеперь отправь любое сообщение (текст, фото, видео, файл, стикер) — оно будет переслано пользователю.")
+        await msg.answer(f"✅ HEX принят.\nТеперь отправь сообщение (текст/фото/видео/стикер) — оно сразу будет переслано пользователю.")
     except:
         await msg.answer("❌ Ошибка команды")
 
-@dp.message()
-async def handle_admin_media(msg: Message):
-    if msg.from_user.id != ADMIN_ID or msg.from_user.id not in pending_reteik:
-        return
-    hex_code = pending_reteik.pop(msg.from_user.id)
-    sent = False
-    for uid, data in users.items():
-        if data.get("hex") == hex_code:
-            try:
-                await bot.copy_message(
-                    chat_id=int(uid),
-                    from_chat_id=msg.chat.id,
-                    message_id=msg.message_id
-                )
-                await msg.answer("✅ Сообщение (с медиа) успешно отправлено пользователю!")
-                sent = True
-            except Exception as e:
-                await msg.answer(f"❌ Не удалось отправить: {str(e)}")
-            break
-    if not sent:
-        await msg.answer("❌ HEX не найден")
-
-@dp.message(Command("broadcast"))
-async def broadcast_start(msg: Message, state: FSMContext):
+@dp.message(Command("broad"))
+async def broad_start(msg: Message):
     if msg.from_user.id != ADMIN_ID: return
-    await state.clear()
-    await msg.answer("📢 Отправь сообщение для рассылки:")
-    await state.set_state(BroadcastState.waiting_message)
-
-@dp.message(BroadcastState.waiting_message)
-async def broadcast_preview(msg: Message, state: FSMContext):
-    if msg.from_user.id != ADMIN_ID:
-        await state.clear()
-        return
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Принять и разослать", callback_data="broadcast_accept")],
-        [InlineKeyboardButton(text="❌ Отклонить", callback_data="broadcast_reject")]
-    ])
-    await state.update_data(original_message={"chat_id": msg.chat.id, "message_id": msg.message_id})
-    await bot.copy_message(chat_id=msg.from_user.id, from_chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=kb)
-    await msg.answer("👆 Это как увидят пользователи.\nВыбери действие на кнопках выше.")
-
-@dp.callback_query(F.data == "broadcast_accept")
-async def broadcast_accept(cb: CallbackQuery, state: FSMContext):
-    if cb.from_user.id != ADMIN_ID: return
-    data = await state.get_data()
-    if "original_message" not in data: return
-    orig_chat = data["original_message"]["chat_id"]
-    orig_msg = data["original_message"]["message_id"]
-    count = 0
-    for uid in list(users.keys()):
-        try:
-            await bot.copy_message(chat_id=int(uid), from_chat_id=orig_chat, message_id=orig_msg)
-            count += 1
-        except:
-            pass
-    await cb.message.edit_text(f"✅ Рассылка завершена!\nОтправлено {count} пользователям.")
-    await state.clear()
-
-@dp.callback_query(F.data == "broadcast_reject")
-async def broadcast_reject(cb: CallbackQuery, state: FSMContext):
-    if cb.from_user.id != ADMIN_ID: return
-    await cb.message.edit_text("❌ Рассылка отменена.")
-    await state.clear()
+    pending_broad[msg.from_user.id] = True
+    await msg.answer("📢 Напишите сообщение для рассылки (текст, фото, видео, файл, стикер):")
 
 @dp.callback_query(F.data == "support")
-async def support_start(cb: CallbackQuery, state: FSMContext):
+async def support_start(cb: CallbackQuery):
     u = get_user(cb.from_user.id)
     if time.time() < u.get("support_cd", 0):
         await cb.answer("⏳ Техподдержка доступна раз в час!", show_alert=True)
         return
+    pending_support[cb.from_user.id] = True
     await cb.message.edit_text("✍️ Напиши сообщение (25-400 символов):")
-    await state.set_state(SupportState.waiting_text)
 
-@dp.message(SupportState.waiting_text)
-async def support_send(msg: Message, state: FSMContext):
-    if not 25 <= len(msg.text) <= 400:
-        return await msg.answer("❌ Длина сообщения должна быть от 25 до 400 символов!")
-    u = get_user(msg.from_user.id)
-    u["support_cd"] = time.time() + 3600
-    save_data(users)
-    await bot.send_message(ADMIN_ID, f"📩 Пользователь: @{msg.from_user.username}\nHEX: {u['hex']}\nСообщение: {msg.text}\n\nОтветь: /reteik {u['hex']}")
-    await msg.answer("✅ Спасибо! Администратор скоро ответит.")
-    await state.clear()
+@dp.message()
+async def pending_handler(msg: Message):
+    uid = msg.from_user.id
+    if uid in pending_support:
+        del pending_support[uid]
+        if not 25 <= len(msg.text) <= 400:
+            await msg.answer("❌ Длина сообщения должна быть от 25 до 400 символов!")
+            pending_support[uid] = True
+            return
+        u = get_user(uid)
+        u["support_cd"] = time.time() + 3600
+        save_data(users)
+        await bot.send_message(ADMIN_ID, f"📩 Пользователь: @{msg.from_user.username or 'нет'}\nHEX: {u['hex']}\nСообщение: {msg.text}\n\nОтветь: /reteik {u['hex']}")
+        await msg.answer("✅ Спасибо! Администратор скоро ответит.")
+        return
+    if uid in pending_broad:
+        del pending_broad[uid]
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Принять и разослать", callback_data="broad_accept")],[InlineKeyboardButton(text="❌ Отклонить", callback_data="broad_reject")]])
+        await bot.copy_message(chat_id=uid, from_chat_id=msg.chat.id, message_id=msg.message_id, reply_markup=kb)
+        await msg.answer("👆 Это как увидят пользователи.\nВыбери действие на кнопках выше.")
+        return
+    if uid == ADMIN_ID and uid in pending_reteik:
+        hex_code = pending_reteik.pop(uid)
+        sent = False
+        for user_id, data in users.items():
+            if data.get("hex") == hex_code:
+                try:
+                    await bot.copy_message(chat_id=int(user_id), from_chat_id=msg.chat.id, message_id=msg.message_id)
+                    await msg.answer("✅ Сообщение успешно отправлено пользователю!")
+                    sent = True
+                except Exception as e:
+                    await msg.answer(f"❌ Не удалось отправить: {str(e)}")
+                break
+        if not sent:
+            await msg.answer("❌ HEX не найден")
+        return
+
+@dp.callback_query(F.data == "broad_accept")
+async def broad_accept(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID: return
+    orig_chat = cb.message.chat.id
+    orig_msg = cb.message.message_id
+    count = 0
+    for user_id in list(users.keys()):
+        try:
+            await bot.copy_message(chat_id=int(user_id), from_chat_id=orig_chat, message_id=orig_msg)
+            count += 1
+        except:
+            pass
+    await cb.message.edit_text(f"✅ Рассылка завершена!\nОтправлено {count} пользователям.")
+
+@dp.callback_query(F.data == "broad_reject")
+async def broad_reject(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID: return
+    await cb.message.edit_text("❌ Рассылка отменена.")
 
 @dp.callback_query(F.data == "help")
 async def help_cmd(cb: CallbackQuery):
@@ -993,35 +823,23 @@ async def help_cmd(cb: CallbackQuery):
 async def donate(cb: CallbackQuery):
     await cb.message.edit_text("⭐ Донат Звёздами:\nОтправь любой подарок @maryf_do1\nВ описании укажи HEX\n1 звезда = 300 TeX", reply_markup=back_main_kb())
 
-@dp.message(Command("collect"))
-async def cmd_collect(msg: Message):
-    u = get_user(msg.from_user.id)
-    total = 0
-    now = datetime.now()
-    mult = get_pet_multiplier(u["level"])
-    for pet in u.get("pets", {}).values():
-        last = datetime.fromisoformat(pet["last_collect_time"])
-        minutes_passed = (now - last).total_seconds() / 60
-        if minutes_passed >= 30:
-            total += int(pet["earn"] * 2 * mult)
-            pet["last_collect_time"] = (last + timedelta(minutes=30)).isoformat()
-    u["balance"] += total
+@dp.callback_query(F.data == "upgrade_level")
+async def upgrade_level(cb: CallbackQuery):
+    u = get_user(cb.from_user.id)
+    cost = get_next_level_cost(u["level"])
+    if u["balance"] < cost:
+        await cb.answer("❌ Недостаточно TeX!", show_alert=True)
+        return
+    u["balance"] -= cost
+    u["level"] += 1
     handle_zero_balance(u)
-    u["last_collect_time"] = now.isoformat()
-    u["notify_sent"] = False
     save_data(users)
-    await msg.answer(f"💰 Собрано {total} TeX!")
+    await cb.answer(f"✅ Уровень повышен до {u['level']}!", show_alert=True)
+    await show_level_menu(cb)
 
 @dp.message(F.text.startswith("/"))
 async def unknown_command(msg: Message):
-    cmd = msg.text.split()[0].lower()
-    if cmd in KNOWN_COMMANDS:
-        return
-    closest = difflib.get_close_matches(cmd, KNOWN_COMMANDS, n=1, cutoff=0.65)
-    if closest:
-        await msg.answer(f"❌ Команды {cmd} не существует.\n\n🤔 Возможно ты имел в виду:\n{closest[0]}")
-    else:
-        await msg.answer("❌ Неизвестная команда!\n\nИспользуй /menu")
+    await msg.answer("❌ Неизвестная команда!\n\nИспользуй /menu")
 
 async def check_zero_bonuses():
     changed = False
@@ -1033,7 +851,7 @@ async def check_zero_bonuses():
             handle_zero_balance(u)
             changed = True
             try:
-                await bot.send_message(int(uid), "💰 Ты получил +100 TeX за нулевой баланс (через час)!")
+                await bot.send_message(int(uid), "💰 Ты получил +100 TeX за нулевой баланс!")
             except:
                 pass
     if changed:
@@ -1045,14 +863,11 @@ async def pet_notify_job():
     for uid_str, u in list(users.items()):
         if not u.get("pets"): continue
         last_str = u.get("last_collect_time")
-        if not last_str:
-            u["last_collect_time"] = now.isoformat()
-            u["notify_sent"] = False
-            continue
+        if not last_str: continue
         last_c = datetime.fromisoformat(last_str)
         if (now - last_c).total_seconds() >= 1800 and not u.get("notify_sent", False):
             try:
-                await bot.send_message(int(uid_str), "🐾 Питомцы заработали за 30 минут!\nЗабери скорее 💰\n/shop или /collect")
+                await bot.send_message(int(uid_str), "🐾 Питомцы заработали!\nЗабери скорее /collect")
                 u["notify_sent"] = True
                 changed = True
             except:
@@ -1061,9 +876,7 @@ async def pet_notify_job():
         save_data(users)
 
 async def main():
-    print("Бот запущен — рулетка переписана с нуля!")
-    scheduler.add_job(lambda: save_data(users), 'interval', seconds=30)
-    scheduler.add_job(rebuild_top, 'interval', seconds=10)
+    print("Бот запущен")
     scheduler.add_job(check_zero_bonuses, 'interval', minutes=1)
     scheduler.add_job(pet_notify_job, 'interval', minutes=5)
     scheduler.start()
