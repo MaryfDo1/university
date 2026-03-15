@@ -15,8 +15,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 TOKEN = "8595080357:AAEhqULh8o8jSIynYgoOzDjlkdY9cCWUoZo"
 ADMIN_ID = 2109352567
-DATA_FILE = "users.json"
-TOP_FILE = "toper.json"
+DATA_FILE = "/app/data/users.json"
+TOP_FILE = "/app/data/toper.json"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
