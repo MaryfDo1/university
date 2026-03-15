@@ -13,7 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-TOKEN = "8595080357:AAHMCIjzaLAEzBL0abnID4TndUwMFqBp4E8"
+TOKEN = "8595080357:AAEhqULh8o8jSIynYgoOzDjlkdY9cCWUoZo"
 ADMIN_ID = 2109352567
 DATA_FILE = "users.json"
 TOP_FILE = "toper.json"
