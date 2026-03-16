@@ -883,9 +883,9 @@ async def main():
     await dp.start_polling(bot)
     
 print("=== users.json ===")
-print(open("users.json", "r", encoding="utf-8").read())
+print(open("/app/data/users.json", "r", encoding="utf-8").read())
 print("=== toper.json ===")
-print(open("toper.json", "r", encoding="utf-8").read())
+print(open("/app/data/toper.json", "r", encoding="utf-8").read())
 print("=== конец ===")
 
 if __name__ == "__main__":
