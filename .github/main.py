@@ -881,12 +881,12 @@ async def main():
     scheduler.add_job(pet_notify_job, 'interval', minutes=5)
     scheduler.start()
     await dp.start_polling(bot)
-    
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
 print("=== users.json ===")
 print(open("/app/data/users.json", "r", encoding="utf-8").read())
 print("=== toper.json ===")
 print(open("/app/data/toper.json", "r", encoding="utf-8").read())
 print("=== конец ===")
-
-if __name__ == "__main__":
-    asyncio.run(main())
